@@ -1,0 +1,102 @@
+name: go-queue-sql_push
+
+on:
+  push:
+    # branches:
+    #   - main
+    paths:
+      - "./"
+      - ".github/workflows/go-queue-sql_push.yml"
+
+jobs:
+  environment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository code
+        uses: actions/checkout@v4
+      - name: Get version
+        run: |
+          version=`cat /home/runner/work/go-queue-sql/go-queue-sql/version.json | jq '.Version' | sed 's/"//g'`
+          echo $version
+          echo "version=$version" >> $GITHUB_ENV
+      - name: Generate build artifacts
+        run: |
+          mkdir -p /tmp
+          echo ${{ env.version }} >> /tmp/version
+      - name: Upload artifacts (environment)
+        uses: actions/upload-artifact@v4
+        with:
+          name: environment
+          path: |
+            /tmp/version
+
+  go_lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.19
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.51.1
+          working-directory: .
+          args: --verbose
+
+  go_test:
+    needs: [go_lint]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 1.19
+      - name: Docker Start
+        run: |
+          docker compose up -d
+      - name: Test go-queue-sql
+        run: |
+          cd /home/runner/work/go-queue-sql/go-queue-sql
+          go mod download
+          go test -v ./... -coverprofile /tmp/go-queue-sql.out | tee /tmp/go-queue-sql.log
+      - name: Docker Clean-up
+        run: |
+          docker compose down
+      - name: Upload artifacts (go_test)
+        uses: actions/upload-artifact@v4
+        with:
+          name: go_test
+          path: |
+            /tmp/go-queue-sql.log
+            /tmp/go-queue-sql.out
+
+  git_push_tag:
+    needs: [go_test, environment]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts (environment)
+        uses: actions/download-artifact@v4
+        with:
+          name: environment
+          path: /tmp
+      - name: Get environment
+        run: |
+          version=`cat /tmp/version`
+          echo "version=$version" >> $GITHUB_ENV
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: "0"
+      - name: Push/Update version
+        uses: anothrNick/github-tag-action@1.36.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WITH_V: true
+          CUSTOM_TAG: v${{ env.version }}
