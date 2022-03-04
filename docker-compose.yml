@@ -1,0 +1,34 @@
+version: "3"
+
+services:
+
+  postgres:
+    container_name: "postgres"
+    hostname: "postgres"
+    image: ghcr.io/antonio-alexander/bludgeon-database-postgres:latest
+    restart: "always"
+    build:
+      context: ./cmd/postgres
+      dockerfile: ./Dockerfile
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: postgres
+
+  mysql:
+    container_name: "mysql"
+    hostname: "mysql"
+    image: ghcr.io/antonio-alexander/bludgeon-database-mysql:latest
+    restart: "always"
+    build:
+      context: ./cmd/mysql
+      dockerfile: ./Dockerfile
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: mysql
+      MYSQL_DATABASE: mysql
+      MYSQL_USER: mysql
+      MYSQL_PASSWORD: mysql
