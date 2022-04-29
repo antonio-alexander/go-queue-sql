@@ -5,8 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	goqueue "github.com/antonio-alexander/go-queue"
 	sql "github.com/antonio-alexander/go-queue-sql"
+	example "github.com/antonio-alexander/go-queue-sql/internal/example"
+
 	"github.com/stretchr/testify/assert"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -24,33 +25,18 @@ func init() {
 	configuration = sql.ConfigFromEnv(envs)
 }
 
-func initQueue() (interface {
-	goqueue.Dequeuer
-	goqueue.Enqueuer
-	//REVIEW: do we want to implement events?
-	// goqueue.Event
-	goqueue.Info
-	sql.Owner
-}, error) {
+func TestDequeue(t *testing.T) {
 	s := sql.New()
-	if err := s.Start(configuration); err != nil {
-		return nil, err
-	}
-	return s, nil
-}
-
-func TestEnqueue(t *testing.T) {
-	s, err := initQueue()
+	err := s.Initialize(configuration)
 	assert.Nil(t, err)
-	bytes := []byte("Hello, World!")
-	overflow := s.Enqueue(bytes)
+	data := &example.Data{
+		Int:    12345,
+		String: "12345",
+	}
+	overflow := s.Enqueue(data)
 	assert.False(t, overflow)
-	length := s.Length()
-	assert.GreaterOrEqual(t, length, 1)
-	item, underflow := s.Dequeue()
+	dataDequeued, underflow := example.Dequeue(s)
 	assert.False(t, underflow)
-	bytes, ok := item.([]byte)
-	assert.True(t, ok)
-	assert.Equal(t, []byte("Hello, World!"), bytes)
-	s.Close()
+	assert.Equal(t, data, dataDequeued)
+	s.Shutdown()
 }

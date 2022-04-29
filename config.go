@@ -3,7 +3,7 @@ package sql
 const (
 	defaultDatabaseHost  string = "localhost"
 	defaultDatabasePort  string = "3306"
-	defaultDatabaseName  string = "queue"
+	defaultDatabaseName  string = "go_queue_sql"
 	defaultDatabaseTable string = "queue"
 	defaultDriverName    string = "mysql"
 	defaultUsername      string = "root"

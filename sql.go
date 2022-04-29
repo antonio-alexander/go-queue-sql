@@ -2,7 +2,6 @@ package sql
 
 import (
 	"encoding"
-	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -10,10 +9,9 @@ import (
 	go_sql "database/sql"
 
 	goqueue "github.com/antonio-alexander/go-queue"
-)
 
-//TODO: this should start somewhere simple, at a high level I want a
-// kafka client that's wrapped in the queue interfaces
+	"github.com/pkg/errors"
+)
 
 type sqlQueue struct {
 	sync.RWMutex
@@ -25,10 +23,9 @@ type sqlQueue struct {
 }
 
 func New(parameters ...interface{}) interface {
-	goqueue.Dequeuer
+	goqueue.Owner
 	goqueue.Enqueuer
-	//REVIEW: do we want to implement events?
-	// goqueue.Event
+	goqueue.Dequeuer
 	goqueue.Info
 	Owner
 } {
@@ -70,48 +67,29 @@ func (s *sqlQueue) dequeue(n int) ([]bytes, error) {
 	if n == 0 {
 		return nil, nil
 	}
-	tx, err := s.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
 	switch n {
 	default:
-		query = fmt.Sprintf("SELECT id, data FROM %s ORDER BY id ASC LIMIT ?;", s.table)
+		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC LIMIT ? RETURNING data;", s.table)
 		args = append(args, n)
 	case -1:
-		query = fmt.Sprintf("SELECT id, data FROM %s ORDER BY id ASC;", s.table)
+		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC RETURNING data;", s.table)
 	}
-	rows, err := tx.Query(query, args...)
+	rows, err := s.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
 	bytes := make([]bytes, 0, n)
-	ids := make([]int, 0, n)
 	for rows.Next() {
-		id := 0
 		b := []byte{}
-		if err := rows.Scan(&id, &b); err != nil {
+		if err := rows.Scan(&b); err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
 		bytes = append(bytes, b)
-	}
-	values := make([]string, 0)
-	for _, id := range ids {
-		values = append(values, fmt.Sprint(id))
-	}
-	query = fmt.Sprintf("DELETE FROM %s WHERE id IN (%s)", s.table, strings.Join(values, ","))
-	if _, err := tx.Exec(query); err != nil {
-		return nil, err
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
 	}
 	return bytes, nil
 }
 
-func (s *sqlQueue) Start(config *Configuration) error {
+func (s *sqlQueue) Initialize(config *Configuration) error {
 	s.Lock()
 	defer s.Unlock()
 
@@ -134,24 +112,23 @@ func (s *sqlQueue) Start(config *Configuration) error {
 	return nil
 }
 
-func (s *sqlQueue) Stop() {
+func (s *sqlQueue) Shutdown() error {
 	s.Lock()
 	defer s.Unlock()
 	if !s.started {
-		return
+		return nil
 	}
 	close(s.stopper)
 	s.Wait()
 	if err := s.DB.Close(); err != nil {
-		//TODO: make this nicer
-		fmt.Println(err)
+		return err
 	}
 	s.started = false
+	return nil
 }
 
-func (s *sqlQueue) Close() {
-	s.Lock()
-	defer s.Unlock()
+func (s *sqlQueue) Close() (items []interface{}) {
+	return nil
 }
 
 func (s *sqlQueue) Dequeue() (item interface{}, underflow bool) {
@@ -198,63 +175,61 @@ func (s *sqlQueue) Flush() []interface{} {
 	return items
 }
 
-func (s *sqlQueue) Enqueue(item interface{}) (overflow bool) {
+func (s *sqlQueue) Enqueue(item interface{}) bool {
 	var bytes []byte
 	var err error
 
 	defer func() {
 		if err != nil {
-			overflow = true
 			fmt.Println(err)
 		}
 	}()
 	switch v := item.(type) {
 	default:
-		fmt.Printf("unsupported type: %T\n", v)
-		return
+		err = errors.Errorf("unsupported type: %T\n", v)
+		return true
 	case []byte:
 		bytes = v
 	case encoding.BinaryMarshaler:
 		bytes, err = v.MarshalBinary()
 		if err != nil {
-			return
+			return true
 		}
 	}
 	if err = s.enqueue(bytes); err != nil {
-		return
+		return true
 	}
-	return
+	return false
 }
 
-func (s *sqlQueue) EnqueueMultiple(items []interface{}) (itemsRemaining []interface{}, overflow bool) {
+func (s *sqlQueue) EnqueueMultiple(items []interface{}) ([]interface{}, bool) {
 	var bytes []bytes
 	var err error
 
 	defer func() {
 		if err != nil {
-			overflow = true
 			fmt.Println(err)
 		}
 	}()
 	for _, item := range items {
 		switch v := item.(type) {
 		default:
-			fmt.Printf("unsupported type: %T\n", v)
-			return
+			err = errors.Errorf("unsupported type: %T\n", v)
+			return nil, true
 		case []byte:
 			bytes = append(bytes, v)
 		case encoding.BinaryMarshaler:
 			b, err := v.MarshalBinary()
 			if err != nil {
-				return
+				return nil, true
 			}
 			bytes = append(bytes, b)
 		}
 	}
 	if err = s.enqueue(bytes...); err != nil {
-		return
+		return nil, true
 	}
-	return
+	return nil, false
 }
 
 func (s *sqlQueue) Length() int {
