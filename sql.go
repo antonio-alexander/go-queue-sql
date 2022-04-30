@@ -1,6 +1,7 @@
 package sql
 
 import (
+	"context"
 	"encoding"
 	"fmt"
 	"strings"
@@ -16,9 +17,10 @@ import (
 type sqlQueue struct {
 	sync.RWMutex
 	sync.WaitGroup
+	context.Context
 	*go_sql.DB
 	started bool
-	table   string
+	config  Configuration
 	stopper chan struct{}
 }
 
@@ -33,8 +35,24 @@ func New(parameters ...interface{}) interface {
 	return s
 }
 
+func (s *sqlQueue) launchContext() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s.Add(1)
+	go func() {
+		defer s.WaitGroup.Done()
+
+		select {
+		case <-s.stopper:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	s.Context = ctx
+}
+
 func (s *sqlQueue) length() (int, error) {
-	query := fmt.Sprintf("SELECT count(*) FROM %s", s.table)
+	query := fmt.Sprintf("SELECT count(*) FROM %s", s.config.Table)
 	row := s.QueryRow(query)
 	length := 0
 	if err := row.Scan(&length); err != nil {
@@ -53,7 +71,7 @@ func (s *sqlQueue) enqueue(items ...bytes) error {
 		args = append(args, bytes)
 		values = append(values, "(?)")
 	}
-	query := fmt.Sprintf("INSERT INTO %s (data) VALUES %s;", s.table, strings.Join(values, ","))
+	query := fmt.Sprintf("INSERT INTO %s (data) VALUES %s;", s.config.Table, strings.Join(values, ","))
 	if _, err := s.Exec(query, args...); err != nil {
 		return err
 	}
@@ -69,10 +87,10 @@ func (s *sqlQueue) dequeue(n int) ([]bytes, error) {
 	}
 	switch n {
 	default:
-		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC LIMIT ? RETURNING data;", s.table)
+		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC LIMIT ? RETURNING data;", s.config.Table)
 		args = append(args, n)
 	case -1:
-		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC RETURNING data;", s.table)
+		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC RETURNING data;", s.config.Table)
 	}
 	rows, err := s.Query(query, args...)
 	if err != nil {
@@ -87,6 +105,48 @@ func (s *sqlQueue) dequeue(n int) ([]bytes, error) {
 		bytes = append(bytes, b)
 	}
 	return bytes, nil
+}
+
+func (s *sqlQueue) createTable(config *Configuration) error {
+	if !config.CreateTable {
+		return nil
+	}
+	query := fmt.Sprintf(
+		`CREATE TABLE IF NOT EXISTS %s (
+			id SERIAL,
+			data BLOB
+		) ENGINE = InnoDB;`, config.Table)
+	if _, err := s.Query(query); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *sqlQueue) QueryRow(query string, args ...interface{}) *go_sql.Row {
+	if s.config.QueryTimeout <= 0 {
+		return s.DB.QueryRow(query, args...)
+	}
+	ctx, cancel := context.WithTimeout(s.Context, s.config.QueryTimeout)
+	defer cancel()
+	return s.QueryRowContext(ctx, query, args...)
+}
+
+func (s *sqlQueue) Query(query string, args ...interface{}) (*go_sql.Rows, error) {
+	if s.config.QueryTimeout <= 0 {
+		return s.DB.Query(query, args...)
+	}
+	ctx, cancel := context.WithTimeout(s.Context, s.config.QueryTimeout)
+	defer cancel()
+	return s.DB.QueryContext(ctx, query, args...)
+}
+
+func (s *sqlQueue) Exec(query string, args ...interface{}) (go_sql.Result, error) {
+	if s.config.QueryTimeout <= 0 {
+		return s.DB.Exec(query, args...)
+	}
+	ctx, cancel := context.WithTimeout(s.Context, s.config.QueryTimeout)
+	defer cancel()
+	return s.DB.ExecContext(ctx, query, args...)
 }
 
 func (s *sqlQueue) Initialize(config *Configuration) error {
@@ -105,9 +165,13 @@ func (s *sqlQueue) Initialize(config *Configuration) error {
 	if err = sql.Ping(); err != nil {
 		return err
 	}
+	if err := s.createTable(config); err != nil {
+		return err
+	}
 	s.DB = sql
-	s.table = config.Table
+	s.config.Table = config.Table
 	s.stopper = make(chan struct{})
+	s.launchContext()
 	s.started = true
 	return nil
 }

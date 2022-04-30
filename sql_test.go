@@ -13,7 +13,18 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 )
 
-var configuration *sql.Configuration
+var configuration = &sql.Configuration{
+	Hostname:     sql.DefaultDatabaseHost,
+	Port:         sql.DefaultDatabasePort,
+	Database:     sql.DefaultDatabaseName,
+	Table:        sql.DefaultDatabaseTable,
+	DriverName:   sql.DefaultDriverName,
+	Username:     sql.DefaultUsername,
+	Password:     sql.DefaultPassword,
+	ParseTime:    sql.DefaultParseTime,
+	CreateTable:  sql.DefaultCreateTable,
+	QueryTimeout: sql.DefaultQueryTimeout,
+}
 
 func init() {
 	envs := make(map[string]string)
