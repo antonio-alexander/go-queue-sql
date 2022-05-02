@@ -2,7 +2,6 @@ package sql
 
 import (
 	"context"
-	"encoding"
 	"fmt"
 	"strings"
 	"sync"
@@ -15,24 +14,41 @@ import (
 )
 
 type sqlQueue struct {
-	sync.RWMutex
 	sync.WaitGroup
 	context.Context
 	*go_sql.DB
-	started bool
-	config  Configuration
-	stopper chan struct{}
+	started      bool
+	config       Configuration
+	errorHandler ErrorHandlerFx
+	stopper      chan struct{}
 }
 
 func New(parameters ...interface{}) interface {
 	goqueue.Owner
 	goqueue.Enqueuer
 	goqueue.Dequeuer
-	goqueue.Info
+	goqueue.Peeker
+	goqueue.Length
 	Owner
+	ErrorHandler
 } {
 	s := &sqlQueue{}
+	for _, parameter := range parameters {
+		switch v := parameter.(type) {
+		case *Configuration:
+			if err := s.Initialize(v); err != nil {
+				panic(err)
+			}
+		}
+	}
 	return s
+}
+
+func (s *sqlQueue) error(err error) {
+	if s.errorHandler == nil {
+		return
+	}
+	s.errorHandler(err)
 }
 
 func (s *sqlQueue) launchContext() {
@@ -61,7 +77,7 @@ func (s *sqlQueue) length() (int, error) {
 	return length, nil
 }
 
-func (s *sqlQueue) enqueue(items ...bytes) error {
+func (s *sqlQueue) enqueue(items ...goqueue.Bytes) error {
 	if len(items) <= 0 {
 		return nil
 	}
@@ -78,25 +94,48 @@ func (s *sqlQueue) enqueue(items ...bytes) error {
 	return nil
 }
 
-func (s *sqlQueue) dequeue(n int) ([]bytes, error) {
+func (s *sqlQueue) dequeue(n ...int) ([]goqueue.Bytes, error) {
 	var args []interface{}
+	var bytes []goqueue.Bytes
 	var query string
 
-	if n == 0 {
-		return nil, nil
-	}
-	switch n {
+	switch {
 	default:
-		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC LIMIT ? RETURNING data;", s.config.Table)
-		args = append(args, n)
-	case -1:
 		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC RETURNING data;", s.config.Table)
+	case len(n) > 0:
+		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC LIMIT ? RETURNING data;", s.config.Table)
+		args = append(args, n[0])
 	}
 	rows, err := s.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
-	bytes := make([]bytes, 0, n)
+	for rows.Next() {
+		b := []byte{}
+		if err := rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		bytes = append(bytes, b)
+	}
+	return bytes, nil
+}
+
+func (s *sqlQueue) peek(n ...int) ([]goqueue.Bytes, error) {
+	var args []interface{}
+	var bytes []goqueue.Bytes
+	var query string
+
+	switch {
+	default:
+		query = fmt.Sprintf("SELECT data FROM %s ORDER BY id ASC;", s.config.Table)
+	case len(n) > 0:
+		query = fmt.Sprintf("SELECT data FROM %s ORDER BY id ASC LIMIT ?;", s.config.Table)
+		args = append(args, n[0])
+	}
+	rows, err := s.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
 	for rows.Next() {
 		b := []byte{}
 		if err := rows.Scan(&b); err != nil {
@@ -150,9 +189,6 @@ func (s *sqlQueue) Exec(query string, args ...interface{}) (go_sql.Result, error
 }
 
 func (s *sqlQueue) Initialize(config *Configuration) error {
-	s.Lock()
-	defer s.Unlock()
-
 	if s.started {
 		return errors.New("started")
 	}
@@ -176,29 +212,68 @@ func (s *sqlQueue) Initialize(config *Configuration) error {
 	return nil
 }
 
-func (s *sqlQueue) Shutdown() error {
-	s.Lock()
-	defer s.Unlock()
+func (s *sqlQueue) SetErrorHandler(errorHandler ErrorHandlerFx) {
+	s.errorHandler = errorHandler
+}
+
+func (s *sqlQueue) Shutdown() {
 	if !s.started {
-		return nil
+		return
 	}
 	close(s.stopper)
 	s.Wait()
 	if err := s.DB.Close(); err != nil {
-		return err
+		s.error(err)
 	}
 	s.started = false
-	return nil
+	s.errorHandler = nil
 }
 
 func (s *sqlQueue) Close() (items []interface{}) {
+	s.Shutdown()
 	return nil
+}
+
+func (s *sqlQueue) Peek() (items []interface{}) {
+	bytes, err := s.peek()
+	if err != nil {
+		s.error(err)
+		return nil
+	}
+	for _, bytes := range bytes {
+		items = append(items, bytes)
+	}
+	return items
+}
+
+func (s *sqlQueue) PeekHead() (item interface{}, underflow bool) {
+	bytes, err := s.peek(1)
+	if err != nil {
+		s.error(err)
+		return nil, true
+	}
+	if len(bytes) <= 0 {
+		return nil, true
+	}
+	return bytes[0], false
+}
+
+func (s *sqlQueue) PeekFromHead(n int) (items []interface{}) {
+	bytes, err := s.peek(n)
+	if err != nil {
+		s.error(err)
+		return nil
+	}
+	for _, bytes := range bytes {
+		items = append(items, bytes)
+	}
+	return items
 }
 
 func (s *sqlQueue) Dequeue() (item interface{}, underflow bool) {
 	bytes, err := s.dequeue(1)
 	if err != nil {
-		fmt.Println(err)
+		s.error(err)
 		return nil, true
 	}
 	if len(bytes) <= 0 {
@@ -210,7 +285,7 @@ func (s *sqlQueue) Dequeue() (item interface{}, underflow bool) {
 func (s *sqlQueue) DequeueMultiple(n int) []interface{} {
 	bytes, err := s.dequeue(n)
 	if err != nil {
-		fmt.Println(err)
+		s.error(err)
 		return nil
 	}
 	if len(bytes) <= 0 {
@@ -224,9 +299,9 @@ func (s *sqlQueue) DequeueMultiple(n int) []interface{} {
 }
 
 func (s *sqlQueue) Flush() []interface{} {
-	bytes, err := s.dequeue(-1)
+	bytes, err := s.dequeue()
 	if err != nil {
-		fmt.Println(err)
+		s.error(err)
 		return nil
 	}
 	if len(bytes) <= 0 {
@@ -240,57 +315,26 @@ func (s *sqlQueue) Flush() []interface{} {
 }
 
 func (s *sqlQueue) Enqueue(item interface{}) bool {
-	var bytes []byte
-	var err error
-
-	defer func() {
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
-	switch v := item.(type) {
-	default:
-		err = errors.Errorf("unsupported type: %T\n", v)
+	bytes, err := convertSingle(item)
+	if err != nil {
+		s.error(err)
 		return true
-	case []byte:
-		bytes = v
-	case encoding.BinaryMarshaler:
-		bytes, err = v.MarshalBinary()
-		if err != nil {
-			return true
-		}
 	}
 	if err = s.enqueue(bytes); err != nil {
+		s.error(err)
 		return true
 	}
 	return false
 }
 
 func (s *sqlQueue) EnqueueMultiple(items []interface{}) ([]interface{}, bool) {
-	var bytes []bytes
-	var err error
-
-	defer func() {
-		if err != nil {
-			fmt.Println(err)
-		}
-	}()
-	for _, item := range items {
-		switch v := item.(type) {
-		default:
-			err = errors.Errorf("unsupported type: %T\n", v)
-			return nil, true
-		case []byte:
-			bytes = append(bytes, v)
-		case encoding.BinaryMarshaler:
-			b, err := v.MarshalBinary()
-			if err != nil {
-				return nil, true
-			}
-			bytes = append(bytes, b)
-		}
+	bytes, err := convertMultiple(items)
+	if err != nil {
+		s.error(err)
+		return nil, true
 	}
 	if err = s.enqueue(bytes...); err != nil {
+		s.error(err)
 		return nil, true
 	}
 	return nil, false
@@ -299,12 +343,8 @@ func (s *sqlQueue) EnqueueMultiple(items []interface{}) ([]interface{}, bool) {
 func (s *sqlQueue) Length() int {
 	length, err := s.length()
 	if err != nil {
-		fmt.Println(err)
+		s.error(err)
 		return -1
 	}
 	return length
-}
-
-func (s *sqlQueue) Capacity() int {
-	return -1
 }

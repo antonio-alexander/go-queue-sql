@@ -6,9 +6,10 @@ import (
 	"testing"
 
 	sql "github.com/antonio-alexander/go-queue-sql"
-	example "github.com/antonio-alexander/go-queue-sql/internal/example"
 
-	"github.com/stretchr/testify/assert"
+	goqueue "github.com/antonio-alexander/go-queue"
+	infinite_tests "github.com/antonio-alexander/go-queue/infinite/tests"
+	goqueue_tests "github.com/antonio-alexander/go-queue/tests"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -36,18 +37,143 @@ func init() {
 	configuration = sql.ConfigFromEnv(envs)
 }
 
-func TestDequeue(t *testing.T) {
-	s := sql.New()
-	err := s.Initialize(configuration)
-	assert.Nil(t, err)
-	data := &example.Data{
-		Int:    12345,
-		String: "12345",
-	}
-	overflow := s.Enqueue(data)
-	assert.False(t, overflow)
-	dataDequeued, underflow := example.Dequeue(s)
-	assert.False(t, underflow)
-	assert.Equal(t, data, dataDequeued)
-	s.Shutdown()
+func new(configuration *sql.Configuration) interface {
+	goqueue.Dequeuer
+	goqueue.Enqueuer
+	goqueue.Owner
+	goqueue.Peeker
+	goqueue.Length
+	sql.Owner
+} {
+	sql := sql.New(configuration)
+	//KIM: if we don't flush because sql is persistent
+	// all the tests will fail because of data from a
+	// previous test
+	sql.Flush()
+	return sql
 }
+
+func TestNew(t *testing.T) {
+	infinite_tests.New(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Length
+	} {
+		return new(configuration)
+	})
+}
+
+func TestDequeue(t *testing.T) {
+	goqueue_tests.Dequeue(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+		goqueue.Length
+	} {
+		return new(configuration)
+	})
+}
+
+func TestDequeueMultiple(t *testing.T) {
+	goqueue_tests.DequeueMultiple(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+	} {
+		return new(configuration)
+	})
+}
+
+func TestFlush(t *testing.T) {
+	goqueue_tests.Flush(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+	} {
+		return new(configuration)
+	})
+}
+
+func TestEnqueue(t *testing.T) {
+	infinite_tests.Enqueue(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Length
+	} {
+		return new(configuration)
+	})
+}
+
+func TestEnqueueMultiple(t *testing.T) {
+	infinite_tests.EnqueueMultiple(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Length
+	} {
+		return new(configuration)
+	})
+}
+
+func TestPeek(t *testing.T) {
+	goqueue_tests.Peek(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+		goqueue.Peeker
+	} {
+		return new(configuration)
+	})
+}
+
+func TestPeekFromHead(t *testing.T) {
+	goqueue_tests.PeekFromHead(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+		goqueue.Peeker
+	} {
+		return new(configuration)
+	})
+}
+
+func TestLength(t *testing.T) {
+	goqueue_tests.Length(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+		goqueue.Length
+	} {
+		return new(configuration)
+	})
+}
+
+func TestQueue(t *testing.T) {
+	goqueue_tests.Queue(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+		goqueue.Length
+	} {
+		return new(configuration)
+	})
+	infinite_tests.Queue(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+		goqueue.Length
+	} {
+		return new(configuration)
+	})
+}
+
+func TestAsync(t *testing.T) {
+	goqueue_tests.Async(t, func(size int) interface {
+		goqueue.Owner
+		goqueue.Enqueuer
+		goqueue.Dequeuer
+		goqueue.Length
+	} {
+		return new(configuration)
+	})
+}
+
+//TODO: test error handler

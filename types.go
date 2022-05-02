@@ -13,6 +13,7 @@ const (
 	DefaultCreateTable   bool          = false
 	DefaultParseTime     bool          = true
 	DefaultQueryTimeout  time.Duration = 30 * time.Second
+	ErrUnsupportedTypef  string        = "unsupported type: %T\n"
 )
 
 //Configuration provides the different items we can use to
@@ -30,9 +31,13 @@ type Configuration struct {
 	QueryTimeout time.Duration `json:"query_timeout"`
 }
 
-type bytes []byte
-
 type Owner interface {
 	Initialize(config *Configuration) error
-	Shutdown() error
+	Shutdown()
+}
+
+type ErrorHandlerFx func(error)
+
+type ErrorHandler interface {
+	SetErrorHandler(ErrorHandlerFx)
 }

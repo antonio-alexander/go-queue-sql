@@ -1,5 +1,5 @@
-github.com/antonio-alexander/go-queue v1.1.1 h1:qAe3AtxwZ2UMLjS7bQ+gdTSBnyXLbmXu2rQibSgqxFA=
-github.com/antonio-alexander/go-queue v1.1.1/go.mod h1:T1+MheS1/xNIsqC9JRhUcQAoRHz3buNWuDQ+D54g8lI=
+github.com/antonio-alexander/go-queue v1.0.1-0.20220502030113-4aef5eff2a16 h1:Opbl/dSzUMS768yDu0TE2Y4T4ibyvdkkrwRo9c/PR4A=
+github.com/antonio-alexander/go-queue v1.0.1-0.20220502030113-4aef5eff2a16/go.mod h1:T1+MheS1/xNIsqC9JRhUcQAoRHz3buNWuDQ+D54g8lI=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
