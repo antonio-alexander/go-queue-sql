@@ -13,19 +13,21 @@ const (
 	DefaultUsername      string = "root"
 	DefaultPassword      string = "mysql"
 	DefaultParseTime     bool   = true
+	DefaultWithPriority  bool   = false
 )
 
 // Configuration provides the different items we can use to
 // configure how we connect to the database
 type Configuration struct {
-	Hostname   string `json:"hostname"`
-	Port       string `json:"port"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	Database   string `json:"database"`
-	Table      string `json:"table"`
-	ParseTime  bool   `json:"parse_time"`
-	DriverName string `json:"driver_name"`
+	Hostname     string `json:"hostname"`
+	Port         string `json:"port"`
+	Username     string `json:"username"`
+	Password     string `json:"password"`
+	Database     string `json:"database"`
+	Table        string `json:"table"`
+	ParseTime    bool   `json:"parse_time"`
+	DriverName   string `json:"driver_name"`
+	WithPriority bool   `json:"with_priority"`
 }
 
 func (c *Configuration) Validate() error {
@@ -41,6 +43,7 @@ func (c *Configuration) Default() {
 	c.Username = DefaultUsername
 	c.Password = DefaultPassword
 	c.ParseTime = DefaultParseTime
+	c.WithPriority = DefaultWithPriority
 }
 
 //ConfigFromEnv can be used to generate a configuration pointer

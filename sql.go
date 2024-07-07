@@ -9,6 +9,7 @@ import (
 	go_sql "database/sql"
 
 	goqueue "github.com/antonio-alexander/go-queue"
+	goqueuepriority "github.com/antonio-alexander/go-queue-priority"
 
 	"github.com/pkg/errors"
 )
@@ -31,6 +32,7 @@ func New(parameters ...interface{}) interface {
 	goqueue.Dequeuer
 	goqueue.Peeker
 	goqueue.Length
+	goqueuepriority.PriorityEnqueuer
 	Owner
 } {
 	var config *Configuration
@@ -109,7 +111,28 @@ func (s *sqlQueue) enqueue(items ...goqueue.Bytes) error {
 	return nil
 }
 
+func (s *sqlQueue) enqueueWithPriority(items ...priorityBytes) error {
+	if len(items) <= 0 {
+		return nil
+	}
+	args := make([]interface{}, 0, len(items)*2)
+	values := make([]string, 0, len(items))
+	for _, priorityBytes := range items {
+		args = append(args, priorityBytes.bytes, priorityBytes.priority)
+		values = append(values, "(?,?)")
+	}
+	query := fmt.Sprintf("INSERT INTO %s (data,priority) VALUES %s;", s.config.Table, strings.Join(values, ","))
+	if _, err := s.Exec(query, args...); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (s *sqlQueue) dequeue(n ...int) ([]goqueue.Bytes, error) {
+	if s.config.WithPriority {
+		return s.dequeueWithPriority(n...)
+	}
+
 	var args []interface{}
 	var bytes []goqueue.Bytes
 	var query string
@@ -119,6 +142,32 @@ func (s *sqlQueue) dequeue(n ...int) ([]goqueue.Bytes, error) {
 		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC RETURNING data;", s.config.Table)
 	case len(n) > 0:
 		query = fmt.Sprintf("DELETE FROM %s ORDER BY id ASC LIMIT ? RETURNING data;", s.config.Table)
+		args = append(args, n[0])
+	}
+	rows, err := s.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		b := []byte{}
+		if err := rows.Scan(&b); err != nil {
+			return nil, err
+		}
+		bytes = append(bytes, b)
+	}
+	return bytes, nil
+}
+
+func (s *sqlQueue) dequeueWithPriority(n ...int) ([]goqueue.Bytes, error) {
+	var args []interface{}
+	var bytes []goqueue.Bytes
+	var query string
+
+	switch {
+	default:
+		query = fmt.Sprintf("DELETE FROM %s ORDER BY priority DESC RETURNING data;", s.config.Table)
+	case len(n) > 0:
+		query = fmt.Sprintf("DELETE FROM %s ORDER BY priority DESC LIMIT ? RETURNING data;", s.config.Table)
 		args = append(args, n[0])
 	}
 	rows, err := s.Query(query, args...)
@@ -330,4 +379,38 @@ func (s *sqlQueue) Length() int {
 		return -1
 	}
 	return length
+}
+
+func (s *sqlQueue) PriorityEnqueue(item interface{}, priorities ...int) bool {
+	var priority int
+
+	for _, p := range priorities {
+		priority = p
+	}
+	bytes, err := convertSingle(item)
+	if err != nil {
+		s.error(err)
+		return true
+	}
+	if err = s.enqueueWithPriority(priorityBytes{
+		bytes:    bytes,
+		priority: priority,
+	}); err != nil {
+		s.error(err)
+		return true
+	}
+	return false
+}
+
+func (s *sqlQueue) PriorityEnqueueMultiple(items []interface{}, priorities ...int) ([]interface{}, bool) {
+	priorityBytes, err := convertMultipleWithPriority(items, priorities...)
+	if err != nil {
+		s.error(err)
+		return nil, true
+	}
+	if err = s.enqueueWithPriority(priorityBytes...); err != nil {
+		s.error(err)
+		return nil, true
+	}
+	return nil, false
 }
