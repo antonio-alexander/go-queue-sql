@@ -4,6 +4,7 @@ go 1.19
 
 require (
 	github.com/antonio-alexander/go-queue v1.2.3
+	github.com/antonio-alexander/go-queue-priority v1.0.0
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/pkg/errors v0.9.1
 )
